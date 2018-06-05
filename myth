@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
+# -*- coding: UTF-8 -*-
 """mythril.py: Bug hunting on the Ethereum blockchain
-
    http://www.github.com/b-mueller/mythril
 """
 
@@ -408,6 +408,10 @@ elif (args.graph) or (args.fire_lasers):
 
         else:
             print("The analysis was completed successfully. No issues were detected.")
+=======
+   """
+import mythril.interfaces.cli
+>>>>>>> upstream/master
 
-else:
-    parser.print_help()
+if __name__ == "__main__":
+    mythril.interfaces.cli.main()

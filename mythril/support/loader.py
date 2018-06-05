@@ -1,4 +1,5 @@
 from mythril.ether.ethcontract import ETHContract
+from mythril.disassembler.disassembly import Disassembly
 import logging
 import re
 
@@ -34,7 +35,7 @@ class DynLoader:
 
     def dynld(self, contract_address, dependency_address):
 
-        logging.info("Dynld at contract " + contract_address + ": "  + dependency_address)
+        logging.info("Dynld at contract " + contract_address + ": " + dependency_address)
 
         m = re.match(r'^(0x[0-9a-fA-F]{40})$', dependency_address)
 
@@ -44,12 +45,11 @@ class DynLoader:
         else:
             return None
 
-        logging.info("Dependency address: " +  dependency_address)
+        logging.info("Dependency address: " + dependency_address)
 
         code = self.eth.eth_getCode(dependency_address)
 
         if (code == "0x"):
             return None
         else:
-            contract = ETHContract(self.eth.eth_getCode(dependency_address), name=dependency_address, address=dependency_address)
-            return contract.as_dict()
+            return Disassembly(code)

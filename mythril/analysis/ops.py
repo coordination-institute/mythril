@@ -18,39 +18,6 @@ class Variable:
         return str(self.val)
 
 
-class Op:
-
-    def __init__(self, node, addr):
-        self.node = node
-        self.addr = addr
-        self.state = node.states[addr]
-
-
-class Call(Op):
-
-    def __init__(self, node, addr, _type, to, gas, value = Variable(0, VarType.CONCRETE), data = None):
-
-        super().__init__(node, addr)
-        self.to = to
-        self.gas = gas
-        self.type = _type
-        self.value = value
-        self.data = data
-
-class Suicide(Op):
-
-    def __init__(self, node, addr, call_type, to, value):
-        super().__init__(node, addr)
-        self.to = to
-
-class SStore(Op):
-
-    def __init__(self, node, addr, value):
-        super().__init__(node, addr)
-        self.value = value
-        self.tainted = False
-
-
 def get_variable(i):
     try:
         return Variable(helper.get_concrete_int(i), VarType.CONCRETE)
@@ -58,4 +25,28 @@ def get_variable(i):
         return Variable(simplify(i), VarType.SYMBOLIC)
 
 
+class Op:
 
+    def __init__(self, node, state, state_index):
+        self.node = node
+        self.state = state
+        self.state_index = state_index
+
+
+class Call(Op):
+
+    def __init__(self, node, state, state_index, _type, to, gas, value=Variable(0, VarType.CONCRETE), data=None):
+
+        super().__init__(node, state, state_index)
+        self.to = to
+        self.gas = gas
+        self.type = _type
+        self.value = value
+        self.data = data
+
+
+class SStore(Op):
+
+    def __init__(self, node, state, state_index, value):
+        super().__init__(node, state, state_index)
+        self.value = value

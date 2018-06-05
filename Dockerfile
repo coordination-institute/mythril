@@ -1,19 +1,21 @@
-FROM ubuntu:rolling
+FROM ubuntu:bionic
 
-COPY . .
+COPY . /opt/mythril
 
 RUN apt-get update \
-  && apt-get install -y software-properties-common python-software-properties \
-  && add-apt-repository ppa:ethereum/ethereum \
+  && apt-get install -y software-properties-common \
+  && add-apt-repository -y ppa:ethereum/ethereum \
   && apt-get update \
-  && apt-get install -y solc \
-  && apt-get install -y libssl-dev \
-  && apt-get install -y python3-pip python3-dev \
+  && apt-get install -y \
+     solc \
+     libssl-dev \
+     python3-pip=9.0.1-2 \
+     python3-dev \
+     pandoc \
+     git \
   && ln -s /usr/bin/python3 /usr/local/bin/python \
-  && pip3 install --upgrade pip \
-  && apt-get install -y pandoc \
-  && apt-get install -y git \
-  && pip3 install laser-ethereum \
+  && cd /opt/mythril \
+  && pip3 install -r requirements.txt \
   && python setup.py install
 
-CMD []
+ENTRYPOINT ["/usr/local/bin/myth"]

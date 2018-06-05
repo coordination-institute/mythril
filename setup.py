@@ -1,5 +1,22 @@
 from setuptools import setup, find_packages
+from setuptools.command.install import install
+import os
 
+# Package version (vX.Y.Z). It must match git tag being used for CircleCI
+# deployment; otherwise the build will failed.
+
+VERSION = "v0.17.14"
+
+class VerifyVersionCommand(install):
+  """Custom command to verify that the git tag matches our version"""
+  description = 'verify that the git tag matches our version'
+
+  def run(self):
+      tag = os.getenv('CIRCLE_TAG')
+
+      if (tag != VERSION):
+          info = "Git tag: {0} does not match the version of this app: {1}".format(tag, VERSION)
+          sys.exit(info)
 
 long_description = '''
 Mythril is a security analysis tool for Ethereum smart contracts. It
@@ -254,7 +271,7 @@ Credit
 setup(
     name='mythril',
 
-    version='0.11.1',
+    version=VERSION[1:],
 
     description='Security analysis tool for Ethereum smart contracts',
     long_description=long_description,
@@ -287,22 +304,42 @@ setup(
     packages=find_packages(exclude=['contrib', 'docs', 'tests']),
 
     install_requires=[
-        'ethereum>=2.0.4',
-        'web3',
+        'ethereum>=2.3.0',
         'ZODB>=5.3.0',
         'z3-solver>=4.5',
-        'laser-ethereum==0.4.3',
+        'laser-ethereum>=0.17.12',
         'requests',
         'BTrees',
-        'py-solc'
+        'py-solc',
+        'plyvel',
+        'pytest',
+        'eth_abi>=1.0.0',
+        'eth-utils>=1.0.1',
+        'eth-account>=0.1.0a2',
+        'eth-hash>=0.1.0',
+        'eth-keyfile>=0.5.1',
+        'eth-keys>=0.2.0b3',
+        'eth-rlp>=0.1.0',
+        'eth-tester>=0.1.0b21',
+        'coverage',
+        'jinja2',
+        'rlp<1.0.0'
     ],
 
     python_requires='>=3.5',
 
     extras_require={
     },
-
+    
+    package_data={
+        'mythril.analysis': ['templates/*']
+    },
+    
     include_package_data=True,
 
-    scripts=['myth']
+    scripts=['myth'],
+
+    cmdclass = {
+      'verify': VerifyVersionCommand,
+    }
 )

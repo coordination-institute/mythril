@@ -1,175 +1,166 @@
-from z3 import Z3Exception, simplify
 import re
 
+from jinja2 import Environment, PackageLoader, select_autoescape
+from laser.ethereum.svm import NodeFlags
+import z3
 
-graph_html = '''<html>
- <head>
-  <style type="text/css">
-   #mynetwork {
-    background-color: #232625;
-   }
-
-   body {
-    background-color: #232625;
-    color: #ffffff;
-   }
-  </style>
-  <link href="https://cdnjs.cloudflare.com/ajax/libs/vis/4.21.0/vis.min.css" rel="stylesheet" type="text/css" />
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/vis/4.21.0/vis.min.js"></script>
-  <script>
-
-    var options = {
-      autoResize: true,
-      height: '100%',
-      width: '100%',
-      manipulation: false,
-      height: '90%',
-      layout: {
-        randomSeed: undefined,
-        improvedLayout:true,
-        hierarchical: {
-          enabled:true,
-          levelSeparation: 450,
-          nodeSpacing: 200,
-          treeSpacing: 100,
-          blockShifting: true,
-          edgeMinimization: true,
-          parentCentralization: false,
-          direction: 'LR',        // UD, DU, LR, RL
-          sortMethod: 'directed'   // hubsize, directed
+default_opts = {
+    'autoResize': True,
+    'height': '100%',
+    'width': '100%',
+    'manipulation': False,
+    'layout': {
+        'improvedLayout': True,
+        'hierarchical': {
+            'enabled': True,
+            'levelSeparation': 450,
+            'nodeSpacing': 200,
+            'treeSpacing': 100,
+            'blockShifting': True,
+            'edgeMinimization': True,
+            'parentCentralization': False,
+            'direction': 'LR',
+            'sortMethod': 'directed'
         }
-      },
-      nodes:{
-        borderWidth: 1,
-        borderWidthSelected: 2,
-        chosen: true,
-        shape: 'box',
-        font: {
-          align: 'left',
-          color: '#FFFFFF',
+    },
+    'nodes': {
+        'color': '#000000',
+        'borderWidth': 1,
+        'borderWidthSelected': 2,
+        'chosen': True,
+        'shape': 'box',
+        'font': {'align': 'left', 'color': '#FFFFFF'},
+    },
+    'edges': {
+        'font': {
+            'color': '#FFFFFF',
+            'face': 'arial',
+            'background': 'none',
+            'strokeWidth': 0,
+            'strokeColor': '#ffffff',
+            'align': 'horizontal',
+            'multi': False,
+            'vadjust': 0,
+        }
+    },
+    'physics': {'enabled': False}
+}
+
+phrack_opts = {
+    'nodes': {
+        'color': '#000000',
+        'borderWidth': 1,
+        'borderWidthSelected': 1,
+        'shapeProperties': {
+            'borderDashes': False,
+            'borderRadius': 0,
         },
-      },
-      edges:{
-        font: {
-          color: '#ffffff',
-          size: 12, // px
-          face: 'arial',
-          background: 'none',
-          strokeWidth: 0, // px
-          strokeColor: '#ffffff',
-          align: 'horizontal',
-          multi: false,
-          vadjust: 0,
+        'chosen': True,
+        'shape': 'box',
+        'font': {'face': 'courier new', 'align': 'left', 'color': '#000000'},
+    },
+    'edges': {
+        'font': {
+            'color': '#000000',
+            'face': 'courier new',
+            'background': 'none',
+            'strokeWidth': 0,
+            'strokeColor': '#ffffff',
+            'align': 'horizontal',
+            'multi': False,
+            'vadjust': 0,
         }
-      },
-
-      physics:{
-        enabled: [ENABLE_PHYSICS],
-      }   
-    
-  }
-
-  [JS]
-
-  </script>
- </head>
-<body>
-<p>Mythril / Ethereum LASER Symbolic VM</p>
-<p><div id="mynetwork"></div><br /></p>
-<script type="text/javascript">
-var container = document.getElementById('mynetwork');
-
-var nodesSet = new vis.DataSet(nodes);
-var edgesSet = new vis.DataSet(edges);
-var data = {'nodes': nodesSet, 'edges': edgesSet}
-
-var gph = new vis.Network(container, data, options);
-gph.on("click", function (params) {
-  // parse node id
-  var nodeID = params['nodes']['0'];
-  if (nodeID) {
-    var clickedNode = nodesSet.get(nodeID);
-
-    if(clickedNode.isExpanded) {
-      clickedNode.label = clickedNode.truncLabel;
     }
-    else {
-      clickedNode.label = clickedNode.fullLabel;
-    }
+}
 
-    clickedNode.isExpanded = !clickedNode.isExpanded;
+default_colors = [
+    {'border': '#26996f', 'background': '#2f7e5b', 'highlight': {'border': '#26996f', 'background': '#28a16f'}},
+    {'border': '#9e42b3', 'background': '#842899', 'highlight': {'border': '#9e42b3', 'background': '#933da6'}},
+    {'border': '#b82323', 'background': '#991d1d', 'highlight': {'border': '#b82323', 'background': '#a61f1f'}},
+    {'border': '#4753bf', 'background': '#3b46a1', 'highlight': {'border': '#4753bf', 'background': '#424db3'}},
+    {'border': '#26996f', 'background': '#2f7e5b', 'highlight': {'border': '#26996f', 'background': '#28a16f'}},
+    {'border': '#9e42b3', 'background': '#842899', 'highlight': {'border': '#9e42b3', 'background': '#933da6'}},
+    {'border': '#b82323', 'background': '#991d1d', 'highlight': {'border': '#b82323', 'background': '#a61f1f'}},
+    {'border': '#4753bf', 'background': '#3b46a1', 'highlight': {'border': '#4753bf', 'background': '#424db3'}},
+]
 
-    nodesSet.update(clickedNode);
-  }
-});
-</script>
-</body>
-</html>
-'''
-
-
-colors = [
-  "{border: '#26996f', background: '#2f7e5b', highlight: {border: '#26996f', background: '#28a16f'}}",
-  "{border: '#9e42b3', background: '#842899', highlight: {border: '#9e42b3', background: '#933da6'}}",
-  "{border: '#b82323', background: '#991d1d', highlight: {border: '#b82323', background: '#a61f1f'}}",
-  "{border: '#4753bf', background: '#3b46a1', highlight: {border: '#4753bf', background: '#424db3'}}",
-  "{border: '#26996f', background: '#2f7e5b', highlight: {border: '#26996f', background: '#28a16f'}}",
-  "{border: '#9e42b3', background: '#842899', highlight: {border: '#9e42b3', background: '#933da6'}}",
-  "{border: '#b82323', background: '#991d1d', highlight: {border: '#b82323', background: '#a61f1f'}}",
-  "{border: '#4753bf', background: '#3b46a1', highlight: {border: '#4753bf', background: '#424db3'}}",
-]  
+phrack_color = {'border': '#000000', 'background': '#ffffff',
+                'highlight': {'border': '#000000', 'background': '#ffffff'}}
 
 
-def serialize(statespace, color_map):
-
+def extract_nodes(statespace, color_map):
     nodes = []
-    edges = []
-
     for node_key in statespace.nodes:
+        node = statespace.nodes[node_key]
+        instructions = [state.get_current_instruction() for state in node.states]
+        code_split = []
+        for instruction in instructions:
+            if instruction['opcode'].startswith("PUSH"):
+                code_line = "%d %s %s" % (instruction['address'], instruction['opcode'], instruction['argument'])
+            elif instruction['opcode'].startswith("JUMPDEST") and NodeFlags.FUNC_ENTRY in node.flags and instruction['address'] == node.start_addr:
+                code_line = node.function_name
+            else:
+                code_line = "%d %s" % (instruction['address'], instruction['opcode'])
 
-        code =  statespace.nodes[node_key].as_dict()['code']
+            code_line = re.sub("([0-9a-f]{8})[0-9a-f]+", lambda m: m.group(1) + "(...)", code_line)
+            code_split.append(code_line)
 
-        code = re.sub("([0-9a-f]{8})[0-9a-f]+",  lambda m: m.group(1) + "(...)", code)
+        truncated_code = '\n'.join(code_split) if (len(code_split) < 7) \
+            else '\n'.join(code_split[:6]) + "\n(click to expand +)"
 
-        code_split = code.split("\\n")
+        nodes.append({
+            'id': str(node_key),
+            'color': color_map[node.get_cfg_dict()['contract_name']],
+            'size': 150,
+            'fullLabel': '\n'.join(code_split),
+            'label': truncated_code,
+            'truncLabel': truncated_code,
+            'isExpanded': False
+        })
+    return nodes
 
-        truncated_code = code if (len(code_split) < 7) else "\\n".join(code_split[:6]) + "\\n(click to expand +)"
 
-        color = color_map[statespace.nodes[node_key].as_dict()['module_name']]
-
-        nodes.append("{id: '" + str(node_key) + "', color: " + color + ", size: 150, 'label': '" + truncated_code + "', 'fullLabel': '" + code + "', 'truncLabel': '" + truncated_code + "', 'isExpanded': false}")
-
+def extract_edges(statespace):
+    edges = []
     for edge in statespace.edges:
+        if edge.condition is None:
+            label = ""
+        else:
+            try:
+                label = str(z3.simplify(edge.condition)).replace("\n", "")
+            except z3.Z3Exception:
+                label = str(edge.condition).replace("\n", "")
 
-      if (edge.condition is None):
-          label = ""
-      else:
+        label = re.sub(r'([^_])([\d]{2}\d+)', lambda m: m.group(1) + hex(int(m.group(2))), label)
 
-          try:
-            label = str(simplify(edge.condition)).replace("\n", "")
-          except Z3Exception:
-            label = str(edge.condition).replace("\n", "")
-    
-      label = re.sub("([^_])([\d]{2}\d+)",  lambda m: m.group(1) + hex(int(m.group(2))), label)
-      code = re.sub("([0-9a-f]{8})[0-9a-f]+",  lambda m: m.group(1) + "(...)", code)
-
-      edges.append("{from: '" + str(edge.as_dict()['from']) + "', to: '" + str(edge.as_dict()['to']) + "', 'arrows': 'to', 'label': '" + label + "', 'smooth': {'type': 'cubicBezier'}}")
-
-    return "var nodes = [\n" + ",\n".join(nodes) + "\n];\nvar edges = [\n" + ",\n".join(edges) + "\n];"
+        edges.append({
+            'from': str(edge.as_dict()['from']),
+            'to': str(edge.as_dict()['to']),
+            'arrows': 'to',
+            'label': label,
+            'smooth': {'type': 'cubicBezier'}
+        })
+    return edges
 
 
+def generate_graph(statespace, title="Mythril / Ethereum LASER Symbolic VM", physics=False, phrackify=False):
+    env = Environment(loader=PackageLoader('mythril.analysis'), autoescape=select_autoescape(['html', 'xml']))
+    template = env.get_template('callgraph.html')
 
-def generate_graph(statespace, physics = False):
+    graph_opts = default_opts
+    accounts = statespace.accounts
 
-    i = 0
+    if phrackify:
+        color_map = {accounts[k].contract_name: phrack_color for k in accounts}
+        graph_opts.update(phrack_opts)
+    else:
+        color_map = {accounts[k].contract_name: default_colors[i % len(default_colors)] for i, k in enumerate(accounts)}
 
-    color_map = {}
+    graph_opts['physics']['enabled'] = physics
 
-    for k in statespace.modules:
-      color_map[statespace.modules[k]['name']] = colors[i]
-      i += 1
-
-    html = graph_html.replace("[JS]", serialize(statespace, color_map))
-    html = html.replace("[ENABLE_PHYSICS]", str(physics).lower())
-
-    return html
+    return template.render(title=title,
+                           nodes=extract_nodes(statespace, color_map),
+                           edges=extract_edges(statespace),
+                           phrackify=phrackify,
+                           opts=graph_opts
+                           )

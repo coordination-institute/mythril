@@ -1,9 +1,7 @@
-from z3 import *
-import re
-from mythril.analysis.ops import *
 from mythril.analysis.report import Issue
+from laser.ethereum.svm import NodeFlags
 import logging
-from laser.ethereum import helper
+import re
 
 
 '''
@@ -13,7 +11,7 @@ Test whether CALL return value is checked.
 
 For direct calls, the Solidity compiler auto-generates this check. E.g.:
 
-    Alice c = Alice(address);  
+    Alice c = Alice(address);
     c.ping(42);
 
 Here the CALL will be followed by IZSERO(retval), if retval = ZERO then state is reverted.
@@ -24,60 +22,73 @@ For low-level-calls this check is omitted. E.g.:
 
 '''
 
+
 def execute(statespace):
 
     logging.debug("Executing module: UNCHECKED_RETVAL")
 
     issues = []
-    visited = []
 
-    for call in statespace.calls:
+    for k in statespace.nodes:
 
-        # Only needs to be checked once per call instructions (it's essentially just static analysis)
+        node = statespace.nodes[k]
 
-        if call.addr in visited:
-            continue
+        if NodeFlags.CALL_RETURN in node.flags:
+
+            retval_checked = False
+
+            for state in node.states:
+
+                instr = state.get_current_instruction()
+
+                if (instr['opcode'] == 'ISZERO' and re.search(r'retval', str(state.mstate.stack[-1]))):
+                    retval_checked = True
+                    break
+
+            if not retval_checked:
+
+                address = state.get_current_instruction()['address']
+                issue = Issue(node.contract_name, node.function_name, address, "Unchecked CALL return value")
+
+                issue.description = \
+                    "The return value of an external call is not checked. Note that execution continue even if the called contract throws."
+
+                issues.append(issue)
+
         else:
-            visited.append(call.addr)
 
-        # The instructions executed in each node (basic block) are saved in node.instruction_list, e.g.:
-        # [{address: "132", opcode: "CALL"}, {address: "133", opcode: "ISZERO"}]
+            nStates = len(node.states)
 
-        start_index = helper.get_instruction_index(call.node.instruction_list, call.addr) + 1
- 
-        retval_checked = False
+            for idx in range(0, nStates - 1):  # Ignore CALLs at last position in a node
 
-        # ISZERO retval should be found within the next few instructions.
+                state = node.states[idx]
+                instr = state.get_current_instruction()
 
-        for i in range(0, 10):
+                if (instr['opcode'] == 'CALL'):
 
-            try:
-                instr = call.node.instruction_list[start_index + i]
-            except IndexError:
-                break
+                    retval_checked = False
 
-            if (instr['opcode'] == 'ISZERO' and re.search(r'retval', str(call.node.states[instr['address']].stack[-1]))):
-                retval_checked = True
-                break
+                    for _idx in range(idx, idx + 10):
 
-        if not retval_checked:
+                        try:
+                            _state = node.states[_idx]
+                            _instr = _state.get_current_instruction()
 
-            issue = Issue(call.node.module_name, call.node.function_name, call.addr, "Unchecked CALL return value")
+                            if (_instr['opcode'] == 'ISZERO' and re.search(r'retval', str(_state .mstate.stack[-1]))):
+                                retval_checked = True
+                                break
 
-            if (call.to.type == VarType.CONCRETE):
-                receiver = hex(call.to.val)
-            elif (re.search(r"caller", str(call.to))):
-                receiver = "msg.sender"
-            elif (re.search(r"storage", str(call.to))):
-                receiver = "an address obtained from storage"
-            else:
-                receiver = str(call.to)
+                        except IndexError:
+                            break
 
+                    if not retval_checked:
 
-            issue.description = \
-                "The function " + call.node.function_name + " contains a call to " + receiver + ".\n" \
-                "The return value of this call is not checked. Note that the function will continue to execute with a return value of '0' if the called contract throws."
+                        address = instr['address']
+                        issue = Issue(node.contract_name, node.function_name, address, "Unchecked CALL return value")
 
-            issues.append(issue)
+                        issue.description = \
+                            "The return value of an external call is not checked. Note that execution continue even if the called contract throws."
+
+                        issues.append(issue)
 
     return issues
