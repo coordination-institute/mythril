@@ -408,10 +408,8 @@ elif (args.graph) or (args.fire_lasers):
 
         else:
             print("The analysis was completed successfully. No issues were detected.")
-=======
    """
 import mythril.interfaces.cli
->>>>>>> upstream/master
 
 if __name__ == "__main__":
     mythril.interfaces.cli.main()
