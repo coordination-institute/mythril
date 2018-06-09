@@ -1,97 +1,90 @@
-from mythril.analysis import solver
-from mythril.exceptions import UnsatError
-from laser.ethereum import svm
-from .ops import *
+from mythril import ether
+from mythril.laser.ethereum import svm
+import copy
 import logging
+from .ops import get_variable, SStore, Call, VarType
 
 
-class SStorTaintStatus(Enum):
-    TAINTED = 1
-    UNTAINTED = 2 
-
-
-class StateSpace:
+class SymExecWrapper:
 
     '''
-    Symbolic EVM wrapper
+    Wrapper class for the LASER Symbolic virtual machine. Symbolically executes the code and does a bit of pre-analysis for convenience.
     '''
-    
-    def __init__(self, contracts, dynloader = None, max_depth = 12):
 
-        # Convert ETHContract objects to LASER SVM "modules"
+    def __init__(self, contract, address, dynloader=None, max_depth=12):
 
-        modules = {}
+        account = svm.Account(address, contract.disassembly, contract_name=contract.name)
 
-        for contract in contracts:
-            modules[contract.address] = contract.as_dict()
+        self.accounts = {address: account}
 
-        self.svm = svm.SVM(modules, dynamic_loader=dynloader, max_depth=max_depth)
+        self.laser = svm.LaserEVM(self.accounts, dynamic_loader=dynloader, max_depth=max_depth)
 
-        self.svm.sym_exec(contracts[0].address)
+        self.laser.sym_exec(address)
 
-        self.modules = modules
-        self.nodes = self.svm.nodes
-        self.edges = self.svm.edges
+        self.nodes = self.laser.nodes
+        self.edges = self.laser.edges
 
-        # Analysis
+        # Generate lists of interesting operations
 
         self.calls = []
-        self.suicides = []
         self.sstors = {}
 
-        self.sstor_taint_cache = []
+        for key in self.nodes:
 
+            state_index = 0
 
-        for key in self.svm.nodes:
+            for state in self.nodes[key].states:
 
-            for instruction in self.nodes[key].instruction_list:
+                instruction = state.get_current_instruction()
 
                 op = instruction['opcode']
 
                 if op in ('CALL', 'CALLCODE', 'DELEGATECALL', 'STATICCALL'):
-                    stack = copy.deepcopy(self.svm.nodes[key].states[instruction['address']].stack)
+
+                    stack = state.mstate.stack
 
                     if op in ('CALL', 'CALLCODE'):
                         gas, to, value, meminstart, meminsz, memoutstart, memoutsz = \
-                            get_variable(stack.pop()), get_variable(stack.pop()), get_variable(stack.pop()), get_variable(stack.pop()), get_variable(stack.pop()), get_variable(stack.pop()), get_variable(stack.pop())
+                            get_variable(stack[-1]), get_variable(stack[-2]), get_variable(stack[-3]), get_variable(stack[-4]), get_variable(stack[-5]), get_variable(stack[-6]), get_variable(stack[-7])
 
-                        if (to.type == VarType.CONCRETE):
-                            if (to.val < 5):
+                        if to.type == VarType.CONCRETE and to.val < 5:
                                 # ignore prebuilts
                                 continue
 
                         if (meminstart.type == VarType.CONCRETE and meminsz.type == VarType.CONCRETE):
-                            self.calls.append(Call(self.nodes[key], instruction['address'], op, to, gas, value, self.svm.nodes[key].states[instruction['address']].memory[meminstart.val:meminsz.val*4]))
+                            self.calls.append(Call(self.nodes[key], state, state_index, op, to, gas, value, state.mstate.memory[meminstart.val:meminsz.val * 4]))
                         else:
-                            self.calls.append(Call(self.nodes[key], instruction['address'], op, to, gas, value))                     
+                            self.calls.append(Call(self.nodes[key], state, state_index, op, to, gas, value))
                     else:
                         gas, to, meminstart, meminsz, memoutstart, memoutsz = \
-                            get_variable(stack.pop()), get_variable(stack.pop()), get_variable(stack.pop()), get_variable(stack.pop()), get_variable(stack.pop()), get_variable(stack.pop())
+                            get_variable(stack[-1]), get_variable(stack[-2]), get_variable(stack[-3]), get_variable(stack[-4]), get_variable(stack[-5]), get_variable(stack[-6])
 
-                        self.calls.append(Call(self.nodes[key], instruction['address'], op, to, gas))
+                        self.calls.append(Call(self.nodes[key], state, state_index, op, to, gas))
 
                 elif op == 'SSTORE':
-                    stack = copy.deepcopy(self.svm.nodes[key].states[instruction['address']].stack)
+                    stack = copy.deepcopy(state.mstate.stack)
+                    address = state.environment.active_account.address
 
                     index, value = stack.pop(), stack.pop()
 
                     try:
-                        self.sstors[str(index)].append(SStore(self.nodes[key], instruction['address'], value))
+                        self.sstors[address]
                     except KeyError:
-                        self.sstors[str(index)] = [SStore(self.nodes[key], instruction['address'], value)]
+                        self.sstors[address] = {}
 
-        # self.sstor_analysis()
+                    try:
+                        self.sstors[address][str(index)].append(SStore(self.nodes[key], state, state_index, value))
+                    except KeyError:
+                        self.sstors[address][str(index)] = [SStore(self.nodes[key], state, state_index, value)]
 
+                state_index += 1
 
-    '''
-    def sstor_analysis(self):
+    def find_storage_write(self, address, index):
 
-        logging.info("Analyzing storage operations...")
+        # Find an SSTOR not constrained by caller that writes to storage index "index"
 
-        for index in self.sstors:
-            for s in self.sstors[index]:
-
-                # 'Taint' every 'store' instruction that is reachable without any constraint on msg.sender
+        try:
+            for s in self.sstors[address][index]:
 
                 taint = True
 
@@ -101,33 +94,8 @@ class StateSpace:
                         break
 
                 if taint:
-                    s.tainted = True
-
-                    try:
-                        solver.get_model(s.node.constraints)
-                        s.tainted = True
-                    except UnsatError:
-                        s.tainted = False
-    '''
-
-
-
-    def find_storage_write(self, index):
-
-        # Find a an unconstrained SSTOR that writes to storage index "index"
-
-        try:
-            for s in self.sstors[index]:
-                taint = True
-
-                for constraint in s.node.constraints:
-                    if ("caller" in str(constraint)):
-                        taint = False
-                        break
-
                     return s.node.function_name
 
             return None
         except KeyError:
             return None
-

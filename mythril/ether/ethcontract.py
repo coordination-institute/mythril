@@ -6,19 +6,18 @@ import re
 
 class ETHContract(persistent.Persistent):
 
-    def __init__(self, code, creation_code="", name="", address=""):
+    def __init__(self, code, creation_code="", name="Unknown"):
 
         self.creation_code = creation_code
         self.name = name
-        self.address = address
 
         # Workaround: We currently do not support compile-time linking.
         # Dynamic contract addresses of the format __[contract-name]_____________ are replaced with a generic address
 
-        code = re.sub(r'(_+[A-Za-z0-9]+_+)', 'aa' * 20, code)
+        code = re.sub(r'(_+.*_+)', 'aa' * 20, code)
 
         self.code = code
-
+        self.disassembly = Disassembly(self.code)
 
     def as_dict(self):
 
@@ -27,37 +26,12 @@ class ETHContract(persistent.Persistent):
             'name': self.name,
             'code': self.code,
             'creation_code': self.creation_code,
-            'disassembly': self.get_disassembly()
+            'disassembly': self.disassembly
         }
-
-
-    def get_xrefs(self):
-
-        instruction_list = Disassembly(self.code).instruction_list
-
-        xrefs = []
-
-        for instruction in instruction_list:
-            if instruction['opcode'] == "PUSH20":
-                if instruction['argument']:
-                    addr = instruction['argument']
-
-                    if (re.match(r'^0x[a-zA-Z0-9]{40}$', addr) and addr != "0xffffffffffffffffffffffffffffffffffffffff"):
-                        if addr not in xrefs:
-                            xrefs.append(addr)
-
-        return xrefs
-
-
-    def get_disassembly(self):
-
-        return Disassembly(self.code)
-
 
     def get_easm(self):
 
         return Disassembly(self.code).get_easm()
-
 
     def matches_expression(self, expression):
 
@@ -105,7 +79,7 @@ class InstanceList(persistent.Persistent):
         self.balances = []
         pass
 
-    def add(self, address, balance = 0):
+    def add(self, address, balance=0):
         self.addresses.append(address)
         self.balances.append(balance)
         self._p_changed = True

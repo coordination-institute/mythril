@@ -1,5 +1,19 @@
-class CompilerError(Exception):
+class MythrilBaseException(Exception): 
     pass
 
-class UnsatError(Exception):
+
+class CompilerError(MythrilBaseException): 
     pass
+
+
+class UnsatError(MythrilBaseException): 
+    pass
+
+
+class NoContractFoundError(MythrilBaseException): 
+    pass
+
+
+class CriticalError(MythrilBaseException):
+    pass
+

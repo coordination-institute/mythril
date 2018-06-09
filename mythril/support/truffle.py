@@ -2,17 +2,21 @@ import os
 import re
 import sys
 import json
-from mythril.ether import util
+import logging
 from mythril.ether.ethcontract import ETHContract
+from mythril.ether.soliditycontract import SourceMapping
 from mythril.analysis.security import fire_lasers
-from mythril.analysis.symbolic import StateSpace
-from laser.ethereum import helper
+from mythril.analysis.symbolic import SymExecWrapper
+from mythril.analysis.report import Report
+
+from mythril.ether import util
+from mythril.laser.ethereum import helper
 
 
-def analyze_truffle_project():
+def analyze_truffle_project(args):
 
     project_root = os.getcwd()
-    
+
     build_dir = os.path.join(project_root, "build", "contracts")
 
     files = os.listdir(build_dir)
@@ -31,57 +35,73 @@ def analyze_truffle_project():
                 print("Unable to parse contract data. Please use Truffle 4 to compile your project.")
                 sys.exit()
 
-
             if (len(bytecode) < 4):
                 continue
 
-            ethcontract= ETHContract(bytecode, name=name, address = util.get_indexed_address(0))
+            ethcontract = ETHContract(bytecode, name=name)
 
-            contracts = [ethcontract]
+            address = util.get_indexed_address(0)
+            sym = SymExecWrapper(ethcontract, address, max_depth=10)
+            issues = fire_lasers(sym)
 
-            states = StateSpace(contracts, max_depth = 10)
-            report = fire_lasers(states)
-
-            # augment with source code
-
-            disassembly = ethcontract.get_disassembly()
-            source = contractdata['source']
-
-            deployedSourceMap = contractdata['deployedSourceMap'].split(";")
-
-            mappings = []
-            i = 0
-
-            while(i < len(deployedSourceMap)):
-
-                m = re.search(r"^(\d+):*(\d+)", deployedSourceMap[i])
-
-                if (m):
-                    offset = m.group(1)
-                    length = m.group(2)
+            if not len(issues):
+                if (args.outform == 'text' or args.outform == 'markdown'):
+                    print("# Analysis result for " + name + "\n\nNo issues found.")
                 else:
-                    m = re.search(r"^:(\d+)", deployedSourceMap[i])
-
-                    if m:
-                        length = m.group(1)
-
-                mappings.append((int(offset), int(length)))
-
-                i += 1
-
-            for key, issue in report.issues.items():
-
-                index = helper.get_instruction_index(disassembly.instruction_list, issue.pc)
-
-                if index:
-                    issue.code_start = mappings[index][0]
-                    issue.code_length = mappings[index][1]
-                    issue.code = source[mappings[index][0]: mappings[index][0] + mappings[index][1]]
-
-
-            if len(report.issues):
-                print("Analysis result for " + name + ":\n" + report.as_text())
+                    result = {'contract': name, 'result': {'success': True, 'error': None, 'issues': []}}
+                    print(json.dumps(result))
             else:
-                print("Analysis result for " + name + ": No issues found.") 
 
+                report = Report()
+                # augment with source code
 
+                disassembly = ethcontract.disassembly
+                source = contractdata['source']
+
+                deployedSourceMap = contractdata['deployedSourceMap'].split(";")
+
+                mappings = []
+
+                for item in deployedSourceMap:
+                    mapping = item.split(":")
+
+                    if len(mapping) > 0 and len(mapping[0]) > 0:
+                        offset = int(mapping[0])
+
+                    if len(mapping) > 1 and len(mapping[1]) > 0:
+                        length = int(mapping[1])
+
+                    if len(mapping) > 2 and len(mapping[2]) > 0:
+                        idx = int(mapping[2])
+
+                    lineno = source[0:offset].count('\n') + 1
+
+                    mappings.append(SourceMapping(idx, offset, length, lineno))
+
+                for issue in issues:
+
+                    index = helper.get_instruction_index(disassembly.instruction_list, issue.address)
+
+                    if index:
+                            try:
+                                offset = mappings[index].offset
+                                length = mappings[index].length
+
+                                issue.filename = filename
+                                issue.code = source[offset:offset + length]
+                                issue.lineno = mappings[index].lineno
+                            except IndexError:
+                                logging.debug("No code mapping at index %d", index)
+
+                    report.append_issue(issue)
+
+                if (args.outform == 'json'):
+
+                    result = {'contract': name, 'result': {'success': True, 'error': None, 'issues': list(map(lambda x: x.as_dict(), issues))}}
+                    print(json.dumps(result))
+
+                else:
+                    if (args.outform == 'text'):
+                        print("# Analysis result for " + name + ":\n\n" + report.as_text())
+                    elif (args.outform == 'markdown'):
+                        print(report.as_markdown())

@@ -1,59 +1,74 @@
 import hashlib
+import json
+import operator
+from jinja2 import PackageLoader, Environment
 
 class Issue:
 
-    def __init__(self, contract, function, pc, title, _type="Informational", description="", debug=""):
+    def __init__(self, contract, function, address, title, _type="Informational", description="", debug=""):
 
         self.title = title
         self.contract = contract
         self.function = function
-        self.pc = pc
+        self.address = address
         self.description = description
         self.type = _type
         self.debug = debug
+        self.filename = None
         self.code = None
-
+        self.lineno = None
 
     def as_dict(self):
 
-        return {'title': self.title, 'description':self.description, 'type': self.type}
+        issue = {'title': self.title, 'description':self.description, 'function': self.function, 'type': self.type, 'address': self.address, 'debug': self.debug}
 
+        if self.filename and self.lineno:
+            issue['filename'] = self.filename
+            issue['lineno'] = self.lineno
+
+        if self.code:
+            issue['code'] = self.code
+
+        return issue
+
+    def add_code_info(self, contract):
+        if self.address:
+            codeinfo = contract.get_source_info(self.address)
+            self.filename = codeinfo.filename
+            self.code = codeinfo.code
+            self.lineno = codeinfo.lineno
 
 class Report:
+    environment = Environment(loader=PackageLoader('mythril.analysis'), trim_blocks=True)
 
-    def __init__(self):
+    def __init__(self, verbose=False):
         self.issues = {}
+        self.verbose = verbose
         pass
+
+    def sorted_issues(self):
+        issue_list = [issue.as_dict() for key, issue in self.issues.items()]
+        return sorted(issue_list, key=operator.itemgetter('address', 'title'))
 
     def append_issue(self, issue):
         m = hashlib.md5()
-        m.update((issue.contract + str(issue.pc) + issue.title).encode('utf-8'))
+        m.update((issue.contract + str(issue.address) + issue.title).encode('utf-8'))
         self.issues[m.digest()] = issue
 
     def as_text(self):
-        text = ""
+        name = self._file_name()
+        template = Report.environment.get_template('report_as_text.jinja2')
+        return template.render(filename=name, issues=self.sorted_issues(), verbose=self.verbose)
 
-        for key, issue in self.issues.items():
+    def as_json(self):
+        result = {'success': True, 'error': None, 'issues': self.sorted_issues()}
+        return json.dumps(result, sort_keys=True)
 
-            text += "==== " + issue.title + " ====\n"
-            text += "Type: " + issue.type + "\n"
+    def as_markdown(self):
+        filename = self._file_name()
+        template = Report.environment.get_template('report_as_markdown.jinja2')
+        return template.render(filename=filename, issues=self.sorted_issues(), verbose=self.verbose)
 
-            if len(issue.contract):
-                text += "Contract: " + issue.contract + "\n" 
-            else:
-                text += "Contract: Unknown\n"              
-
-            text += "Function name: " + issue.function + "\n"
-            text += "PC address: " + str(issue.pc) + "\n"
-
-            text += issue.description + "\n--------------------\n"
-
-            if issue.code:
-                text += "Affected code:\n\n" + issue.code + "\n--------------------\n"
-
-            if len(issue.debug):
-                text += "++++ Debugging info ++++\n" + issue.debug + "\n"
-
-            text+="\n"
-
-        return text
+    def _file_name(self):
+        if len(self.issues.values()) > 0:
+            return list(self.issues.values())[0].filename

@@ -15,6 +15,7 @@ If msg.sender is checked against a value in storage, check whether that storage 
 to that index).
 '''
 
+
 def execute(statespace):
 
     logging.debug("Executing module: ETHER_SEND")
@@ -22,6 +23,9 @@ def execute(statespace):
     issues = []
 
     for call in statespace.calls:
+
+        state = call.state
+        address = state.get_current_instruction()['address']
 
         if ("callvalue" in str(call.value)):
             logging.debug("[ETHER_SEND] Skipping refund function")
@@ -35,7 +39,7 @@ def execute(statespace):
 
         interesting = False
 
-        description = "In the function '" + call.node.function_name +"' "
+        description = "In the function `" + call.node.function_name + "` "
 
         if re.search(r'caller', str(call.to)):
             description += "a non-zero amount of Ether is sent to msg.sender.\n"
@@ -49,27 +53,19 @@ def execute(statespace):
             m = re.search(r'storage_([a-z0-9_&^]+)', str(call.to))
 
             if (m):
-
                 idx = m.group(1)
 
-                try:
+                description += "a non-zero amount of Ether is sent to an address taken from storage slot " + str(idx) + ".\n"
 
-                    for s in statespace.sstors[idx]:
+                func = statespace.find_storage_write(state.environment.active_account.address, idx)
 
-                        if s.tainted:
-                            description += "a non-zero amount of Ether is sent to an address taken from storage slot " + str(idx) + "." \
-                                " This storage slot can be written  to by calling the function '" + s.node.function_name + "'.\n"
-                            interesting = True
-                            continue
-
-                except KeyError:
+                if (func):
+                    description += "There is a check on storage index " + str(idx) + ". This storage slot can be written to by calling the function `" + func + "`.\n"
+                    interesting = True
+                else:
                     logging.debug("[ETHER_SEND] No storage writes to index " + str(idx))
-                    break
-
 
         if interesting:
-
-            description += "Call value is " + str(call.value) + ".\n"
 
             node = call.node
 
@@ -86,20 +82,17 @@ def execute(statespace):
 
                 m = re.search(r'storage_([a-z0-9_&^]+)', str(constraint))
 
-                overwrite = False
-
                 if (m):
 
                     constrained = True
                     idx = m.group(1)
 
-                    func = statespace.find_storage_write(idx)
+                    func = statespace.find_storage_write(state.environment.active_account.address, idx)
 
                     if (func):
-                        description += "\nThere is a check on storage index " + str(index) + ". This storage slot can be written to by calling the function '" + func + "'."
-                        overwrite = True
+                        description += "\nThere is a check on storage index " + str(idx) + ". This storage slot can be written to by calling the function `" + func + "`."
                     else:
-                        logging.debug("[ETHER_SEND] No storage writes to index " + str(index))
+                        logging.debug("[ETHER_SEND] No storage writes to index " + str(idx))
                         can_solve = False
                         break
 
@@ -109,8 +102,6 @@ def execute(statespace):
                     constrained = True
                     can_solve = False
                     break
-        
-
 
             if not constrained:
                 description += "It seems that this function can be called without restrictions."
@@ -119,15 +110,16 @@ def execute(statespace):
 
                 try:
                     model = solver.get_model(node.constraints)
-                    logging.debug("[ETHER_SEND] MODEL: " + str(model))
 
                     for d in model.decls():
                         logging.debug("[ETHER_SEND] main model: %s = 0x%x" % (d.name(), model[d].as_long()))
 
-                    issue = Issue(call.node.module_name, call.node.function_name, call.addr, "Ether send", "Warning", description)
+                    debug = "SOLVER OUTPUT:\n" + solver.pretty_print_model(model)
+
+                    issue = Issue(call.node.contract_name, call.node.function_name, address, "Ether send", "Warning", description, debug)
                     issues.append(issue)
- 
+
                 except UnsatError:
-                    logging.debug("[ETHER_SEND] no model found")  
+                    logging.debug("[ETHER_SEND] no model found")
 
     return issues
