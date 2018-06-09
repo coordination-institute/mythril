@@ -5,7 +5,7 @@ import os
 # Package version (vX.Y.Z). It must match git tag being used for CircleCI
 # deployment; otherwise the build will failed.
 
-VERSION = "v0.17.14"
+VERSION = "v0.17.15"
 
 class VerifyVersionCommand(install):
   """Custom command to verify that the git tag matches our version"""
@@ -307,12 +307,10 @@ setup(
         'ethereum>=2.3.0',
         'ZODB>=5.3.0',
         'z3-solver>=4.5',
-        'laser-ethereum>=0.17.12',
         'requests',
         'BTrees',
         'py-solc',
         'plyvel',
-        'pytest',
         'eth_abi>=1.0.0',
         'eth-utils>=1.0.1',
         'eth-account>=0.1.0a2',
@@ -323,7 +321,15 @@ setup(
         'eth-tester>=0.1.0b21',
         'coverage',
         'jinja2',
-        'rlp<1.0.0'
+        'rlp<1.0.0',
+        'py-flags',
+        'mock'
+    ],
+
+    tests_require=[
+      'pytest>=3.6.0',
+      'pytest_mock',
+      'pytest-cov'
     ],
 
     python_requires='>=3.5',
@@ -332,7 +338,7 @@ setup(
     },
     
     package_data={
-        'mythril.analysis': ['templates/*']
+        'mythril.analysis.templates': ['*']
     },
     
     include_package_data=True,
